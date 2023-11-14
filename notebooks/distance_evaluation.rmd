@@ -1,0 +1,771 @@
+
+---
+title: "Evaluation"
+author: "Ingvild Riiser"
+date: "2023-04-05"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, warning=FALSE}
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("plyr")
+library("MASS")
+library("randomForest")
+library("datasets")
+library("dplyr")
+library("tidyr")
+library("synthpop")
+library("ggplot2")
+library("gridExtra")
+library("xtable")
+
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+```
+
+Find weights
+
+```{r}
+data = real_data(censored = FALSE, status = TRUE)
+
+dcr_intra_w0 = evaluate_closeness(data, data, w = 0, nndr = FALSE)
+dcr_intra_w1 = evaluate_closeness(data, data, w = 1, nndr = FALSE)
+
+#here the weights should actually be w=(1-1/(12.4 +1)) makes no difference
+# to the final conclusions
+dcr_intra_w2 = evaluate_closeness(data, data, w = (1 - 1 / 12.4), nndr =
+                                    TRUE)
+
+df_list = list(dcr_intra_w0, dcr_intra_w1, dcr_intra_w2)
+title_list = list("(a)", "(b)", "(c)")
+xlab_list = list("distance", "12.4*distance")
+
+histograms = lapply(1:length(df_list), function(i) {
+  ggplot(NULL) +
+    geom_histogram(
+      aes(x = unlist(df_list[[i]])),
+      binwidth = 0.01,
+      fill = '#b65302',
+      color = "#b65302"
+    ) +
+    labs(title = title_list[[i]]) + xlab("distance") +
+    theme_classic()
+})
+
+multiplot = do.call(grid.arrange, c(histograms, ncol = 3))
+print(histograms)
+ggsave(
+  "../figures/distances_weights_scaled.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+
+histograms = lapply(1:2, function(i) {
+  ggplot(NULL) +
+    geom_histogram(
+      aes(x = unlist(lapply(
+        dcr_intra_w2, "[[", i
+      ))),
+      binwidth = 0.01,
+      fill = '#b65302',
+      color = "#b65302"
+    ) +
+    labs(title = title_list[[i]]) + xlab("distance") +
+    theme_classic()
+})
+
+multiplot = do.call(grid.arrange, c(histograms, ncol = 2))
+print(histograms)
+ggsave(
+  "../figures/distances_weights_scaled_dcr_nndr.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+```
+
+
+Evaluation function for hypothesis test 1
+```{r}
+set.seed(1906)
+
+data = real_data(censored = FALSE, status = TRUE)
+train_test = train_test_set(data, 0.2)
+training_set = train_test[[1]]
+test_set = train_test[[2]]
+
+pat_train = dat_patients(training_set)
+pat_test = dat_patients(test_set)
+
+j = 20
+# find the dcr and nndr values using k generated
+# synthetic data sets (both time forward and time reset), and find the
+# dcr and nndr distance vectors between data_syn_forward and real_train and
+# data_syn_reset and real_train
+# calculate the alpha percentiles for both dcr and nndr
+
+# w should be 1-1/13.4, but this makes a marginal difference on the output
+w = 1 - 1 / 12.4
+# distances between training and test
+l_dcr_nndr_te_tr = evaluate_closeness(test_set, training_set, w = w)
+
+# list of distances for j sets
+dcr_syn_cr_real_train = list()
+dcr_syn_cf_real_train = list()
+# single vector
+dcr_real_test_real_train = unlist(lapply(l_dcr_nndr_te_tr, "[[", 1))
+
+# list of distances for j sets
+nndr_syn_cr_real_train = list()
+nndr_syn_cf_real_train = list()
+# single vector
+nndr_real_test_real_train = unlist(lapply(l_dcr_nndr_te_tr, "[[", 2))
+
+# quantiles
+qtl_dcr_syn_cr_real_train = list()
+qtl_dcr_syn_cf_real_train = list()
+
+# single vector
+qtl_dcr_real_test_real_train = quantile(dcr_real_test_real_train,
+                                        probs = c(0.05, 0.5))
+
+qtl_nndr_syn_cr_real_train = list()
+qtl_nndr_syn_cf_real_train = list()
+
+# single_vector
+qtl_nndr_real_test_real_train = quantile(nndr_real_test_real_train,
+                                         probs = c(0.05, 0.5))
+count = 0
+n = nrow(dat_patients(test_set))
+set.seed(9012)
+for (i in 1:j) {
+  # time forward of same size as test
+  syn_dat_cf = generate_full(training_set, clock = "forward", k = n)
+  #time reset of same size as test
+  syn_dat_cr = generate_full(training_set, clock = "reset", k = n)
+  
+  # find dcr and nndr
+  #between cf and train
+  
+  l_dcr_nndr_cf_tr = evaluate_closeness(syn_dat_cf, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 1))
+  dcr_syn_cf_real_train = c(dcr_syn_cf_real_train, list(temp_dcr))
+  qtl_dcr_syn_cf_real_train = c(qtl_dcr_syn_cf_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 2))
+  nndr_syn_cf_real_train = c(nndr_syn_cf_real_train, list(temp_nndr))
+  qtl_nndr_syn_cf_real_train = c(qtl_nndr_syn_cf_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  #between cr and train
+  l_dcr_nndr_cr_tr = evaluate_closeness(syn_dat_cr, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 1))
+  dcr_syn_cr_real_train = c(dcr_syn_cr_real_train, list(temp_dcr))
+  qtl_dcr_syn_cr_real_train = c(qtl_dcr_syn_cr_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 2))
+  nndr_syn_cr_real_train = c(nndr_syn_cr_real_train, list(temp_nndr))
+  qtl_nndr_syn_cr_real_train = c(qtl_nndr_syn_cr_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  
+  count = count + 1
+  print(count)
+}
+
+```
+Do the Wilcoxon signed rank tests to check if the distance is the same.
+
+```{r}
+
+
+# transform all nested lists into data frames
+#qtl_dcr_real_test_real_train = t(as.data.frame(qtl_dcr_real_test_real_train))
+qtl_dcr_syn_cf_real_train = t(as.data.frame(qtl_dcr_syn_cf_real_train))
+qtl_dcr_syn_cr_real_train = t(as.data.frame(qtl_dcr_syn_cr_real_train))
+
+#qtl_nndr_real_test_real_train = t(as.data.frame(qtl_nndr_real_test_real_train))
+qtl_nndr_syn_cf_real_train = t(as.data.frame(qtl_nndr_syn_cf_real_train))
+qtl_nndr_syn_cr_real_train = t(as.data.frame(qtl_nndr_syn_cr_real_train))
+
+table_dcr_nndr = as.data.frame(matrix(nrow = 5, ncol = 4))
+table_nndr = as.data.frame(matrix(nrow = 5, ncol = 4))
+
+colnames(table_dcr_nndr) = c("0.05 dcr", "0.5 dcr", "0.05 nndr", "0.5 nndr")
+rownames(table_dcr_nndr) = c("d(te, tr)",
+                             "mean(d(cf, tr))",
+                             "mean(d(cr, tr))",
+                             "p-val cf",
+                             "p-val cr")
+
+alphas = c(0.05, 0.5)
+
+p_val = c()
+
+for (i in 1:2) {
+  # dcr
+  table_dcr_nndr[1, i] = qtl_dcr_real_test_real_train[i]
+  table_dcr_nndr[2, i] = mean(qtl_dcr_syn_cf_real_train[, i])
+  table_dcr_nndr[3, i] = mean(qtl_dcr_syn_cr_real_train[, i])
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_dcr_syn_cf_real_train[, i],
+      qtl_dcr_real_test_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_dcr_syn_cr_real_train[, i],
+      qtl_dcr_real_test_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  # nndr
+  table_dcr_nndr[1, i + 2] = qtl_nndr_real_test_real_train[i]
+  table_dcr_nndr[2, i + 2] = mean(qtl_nndr_syn_cf_real_train[, i])
+  table_dcr_nndr[3, i + 2] = mean(qtl_nndr_syn_cr_real_train[, i])
+  
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_nndr_syn_cf_real_train[, i],
+      qtl_nndr_real_test_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_nndr_syn_cr_real_train[, i],
+      qtl_nndr_real_test_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  
+}
+
+# p_value adjustment
+
+#p_val = p.adjust(p_val, method="BH")
+
+# insert the p_values into the table
+
+for (i in 1:2) {
+  table_dcr_nndr[4, i] = p_val[4 * (i - 1) + 1]
+  table_dcr_nndr[5, i] = p_val[4 * i - 2]
+  table_dcr_nndr[4, i + 2] = p_val[4 * i - 1]
+  table_dcr_nndr[5, i + 2] = p_val[4 * i]
+}
+```
+Convert tables to latex tables
+```{r}
+dcr_nndr_xtable = xtable(table_dcr_nndr, type = "latex", digits = 4)
+
+print(dcr_nndr_xtable)
+
+```
+Procedure 2
+
+```{r}
+set.seed(1906)
+
+data = real_data(censored = FALSE, status = TRUE)
+# 50/50 split
+train_test = train_test_set(data, 0.5)
+training_set = train_test[[1]]
+test_set = train_test[[2]]
+
+pat_train = dat_patients(training_set)
+pat_test = dat_patients(test_set)
+
+j = 20
+# find the dcr and nndr values using k generated
+# synthetic data sets (both time forward and time reset), and find the
+# dcr and nndr distance vectors between data_syn_forward and real_train,
+# data_syn_reset and real_train and likewise between the synthetic
+# data sets and real_train
+# calculate the alpha percentiles for both dcr and nndr
+
+
+# now all distances are stochastic
+# list of distances for j sets
+dcr_syn_cr_real_train = list()
+dcr_syn_cf_real_train = list()
+dcr_syn_cr_real_test = list()
+dcr_syn_cf_real_test = list()
+
+
+# list of distances for j sets
+nndr_syn_cr_real_train = list()
+nndr_syn_cf_real_train = list()
+nndr_syn_cr_real_test = list()
+nndr_syn_cf_real_test = list()
+
+
+# quantiles
+qtl_dcr_syn_cr_real_train = list()
+qtl_dcr_syn_cf_real_train = list()
+qtl_dcr_syn_cr_real_test = list()
+qtl_dcr_syn_cf_real_test = list()
+
+qtl_nndr_syn_cr_real_train = list()
+qtl_nndr_syn_cf_real_train = list()
+qtl_nndr_syn_cr_real_test = list()
+qtl_nndr_syn_cf_real_test = list()
+
+count = 0
+# number of synthetic patients
+n = nrow(dat_patients(test_set))
+set.seed(1012)
+for (i in 1:j) {
+  # time forward of same size as test
+  syn_dat_cf = generate_full(training_set, clock = "forward", k = n)
+  #time reset of same size as test
+  syn_dat_cr = generate_full(training_set, clock = "reset", k = n)
+  
+  # find dcr and nndr
+  #between cf and train
+  
+  l_dcr_nndr_cf_tr = evaluate_closeness(syn_dat_cf, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 1))
+  dcr_syn_cf_real_train = c(dcr_syn_cf_real_train, list(temp_dcr))
+  qtl_dcr_syn_cf_real_train = c(qtl_dcr_syn_cf_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 2))
+  nndr_syn_cf_real_train = c(nndr_syn_cf_real_train, list(temp_nndr))
+  qtl_nndr_syn_cf_real_train = c(qtl_nndr_syn_cf_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  #between cr and train
+  l_dcr_nndr_cr_tr = evaluate_closeness(syn_dat_cr, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 1))
+  dcr_syn_cr_real_train = c(dcr_syn_cr_real_train, list(temp_dcr))
+  qtl_dcr_syn_cr_real_train = c(qtl_dcr_syn_cr_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 2))
+  nndr_syn_cr_real_train = c(nndr_syn_cr_real_train, list(temp_nndr))
+  qtl_nndr_syn_cr_real_train = c(qtl_nndr_syn_cr_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  
+  #between cf and test
+  
+  l_dcr_nndr_cf_te = evaluate_closeness(syn_dat_cf, test_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cf_te, "[[", 1))
+  dcr_syn_cf_real_test = c(dcr_syn_cf_real_test, list(temp_dcr))
+  qtl_dcr_syn_cf_real_test = c(qtl_dcr_syn_cf_real_test,
+                               list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cf_te, "[[", 2))
+  nndr_syn_cf_real_test = c(nndr_syn_cf_real_test, list(temp_nndr))
+  qtl_nndr_syn_cf_real_test = c(qtl_nndr_syn_cf_real_test,
+                                list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  #between cr and test
+  l_dcr_nndr_cr_te = evaluate_closeness(syn_dat_cr, test_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cr_te, "[[", 1))
+  dcr_syn_cr_real_test = c(dcr_syn_cr_real_test, list(temp_dcr))
+  qtl_dcr_syn_cr_real_test = c(qtl_dcr_syn_cr_real_test,
+                               list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cr_te, "[[", 2))
+  nndr_syn_cr_real_test = c(nndr_syn_cr_real_test, list(temp_nndr))
+  qtl_nndr_syn_cr_real_test = c(qtl_nndr_syn_cr_real_test,
+                                list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  
+  count = count + 1
+  print(count)
+}
+```
+Wilcoxon signed rank tests
+```{r}
+
+
+# transform all nested lists into data frames
+qtl_dcr_syn_cf_real_train = t(as.data.frame(qtl_dcr_syn_cf_real_train))
+qtl_dcr_syn_cr_real_train = t(as.data.frame(qtl_dcr_syn_cr_real_train))
+qtl_dcr_syn_cf_real_test = t(as.data.frame(qtl_dcr_syn_cf_real_test))
+qtl_dcr_syn_cr_real_test = t(as.data.frame(qtl_dcr_syn_cr_real_test))
+
+qtl_nndr_syn_cf_real_train = t(as.data.frame(qtl_nndr_syn_cf_real_train))
+qtl_nndr_syn_cr_real_train = t(as.data.frame(qtl_nndr_syn_cr_real_train))
+qtl_nndr_syn_cf_real_test = t(as.data.frame(qtl_nndr_syn_cf_real_test))
+qtl_nndr_syn_cr_real_test = t(as.data.frame(qtl_nndr_syn_cr_real_test))
+
+table_dcr_nndr = as.data.frame(matrix(nrow = 6, ncol = 4))
+
+colnames(table_dcr_nndr) = c("0.05 dcr", "0.5 dcr", "0.05 nndr", "0.5 nndr")
+rownames(table_dcr_nndr) = c(
+  "mean(d(cf, tr))",
+  "mean(d(cf, te))",
+  "mean(d(cr, tr))",
+  "mean(d(cr, te))",
+  "p-val cf",
+  "p-val cr"
+)
+
+alphas = c(0.05, 0.5)
+
+p_val = c()
+
+for (i in 1:2) {
+  # dcr
+  table_dcr_nndr[1, i] = mean(qtl_dcr_syn_cf_real_train[, i])
+  table_dcr_nndr[2, i] = mean(qtl_dcr_syn_cf_real_test[, i])
+  table_dcr_nndr[3, i] = mean(qtl_dcr_syn_cr_real_train[, i])
+  table_dcr_nndr[4, i] = mean(qtl_dcr_syn_cr_real_test[, i])
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_dcr_syn_cf_real_train[, i],
+      qtl_dcr_syn_cf_real_test[, i],
+      "less"
+    )$p.value
+  )
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_dcr_syn_cr_real_train[, i],
+      qtl_dcr_syn_cr_real_test[, i],
+      "less"
+    )$p.value
+  )
+  # nndr
+  table_dcr_nndr[1, i + 2] = mean(qtl_nndr_syn_cf_real_train[, i])
+  table_dcr_nndr[2, i + 2] = mean(qtl_nndr_syn_cf_real_test[, i])
+  table_dcr_nndr[3, i + 2] = mean(qtl_nndr_syn_cr_real_train[, i])
+  table_dcr_nndr[4, i + 2] = mean(qtl_nndr_syn_cr_real_test[, i])
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_nndr_syn_cf_real_train[, i],
+      qtl_nndr_syn_cf_real_test[, i],
+      "less"
+    )$p.value
+  )
+  p_val = c(
+    p_val,
+    wilcox.test(
+      qtl_nndr_syn_cr_real_train[, i],
+      qtl_nndr_syn_cr_real_test[, i],
+      "less"
+    )$p.value
+  )
+  
+}
+
+# p_value adjustment
+
+p_val = p.adjust(p_val, method = "BH")
+
+# insert the p_values into the table
+
+for (i in 1:2) {
+  table_dcr_nndr[5, i] = p_val[4 * (i - 1) + 1]
+  table_dcr_nndr[6, i] = p_val[4 * i - 2]
+  table_dcr_nndr[5, i + 2] = p_val[4 * i - 1]
+  table_dcr_nndr[6, i + 2] = p_val[4 * i]
+}
+```
+Convert tables to latex tables
+```{
+r
+}
+library(xtable)
+dcr_nndr_xtable = xtable(table_dcr_nndr, type = "latex", digits = -4)
+
+print(dcr_nndr_xtable)
+
+```
+
+Procedure 3 and 4
+
+```{r}
+set.seed(1906)
+
+data = real_data(censored = FALSE, status = TRUE)
+
+# use the whole data set
+training_set = data
+
+pat_train = dat_patients(training_set)
+
+j = 20
+# find the dcr and nndr values using k generated
+# synthetic data sets (both time forward and time reset), and find the
+# dcr and nndr distance vectors between data_syn_forward and real_train,
+# data_syn_reset and real_train and likewise between the synthetic
+# data sets and real_train
+# calculate the alpha percentiles for both dcr and nndr
+
+l_dcr_nndr_tr_tr = evaluate_closeness(training_set, w = w, training_set)
+
+# list of distances for j sets
+dcr_syn_cr_real_train = list()
+dcr_syn_cf_real_train = list()
+dcr_syn_cf_syn_cf = list()
+dcr_syn_cr_syn_cr = list()
+
+# not stochastic
+dcr_real_train_real_train = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 1))
+
+
+# list of distances for j sets
+nndr_syn_cr_real_train = list()
+nndr_syn_cf_real_train = list()
+nndr_syn_cf_syn_cf = list()
+nndr_syn_cr_syn_cr = list()
+
+# not stochastic
+nndr_real_train_real_train = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 2))
+
+# quantiles
+qtl_dcr_syn_cr_real_train = list()
+qtl_dcr_syn_cf_real_train = list()
+qtl_dcr_syn_cf_syn_cf = list()
+qtl_dcr_syn_cr_syn_cr = list()
+
+# single vector
+qtl_dcr_real_train_real_train = quantile(dcr_real_train_real_train,
+                                         probs = c(0.05, 0.5))
+
+qtl_nndr_syn_cr_real_train = list()
+qtl_nndr_syn_cf_real_train = list()
+qtl_nndr_syn_cf_syn_cf = list()
+qtl_nndr_syn_cr_syn_cr = list()
+
+# single vector
+qtl_nndr_real_train_real_train = quantile(nndr_real_train_real_train,
+                                          probs = c(0.05, 0.5))
+
+count = 0
+# same number of synthetic as real records
+n = nrow(pat_train)
+set.seed(1112)
+for (i in 1:j) {
+  # time forward of same size as test
+  syn_dat_cf = generate_full(training_set, clock = "forward", k = n)
+  #time reset of same size as test
+  syn_dat_cr = generate_full(training_set, clock = "reset", k = n)
+  
+  # find dcr and nndr
+  #between cf and train
+  
+  l_dcr_nndr_cf_tr = evaluate_closeness(syn_dat_cf, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 1))
+  dcr_syn_cf_real_train = c(dcr_syn_cf_real_train, list(temp_dcr))
+  qtl_dcr_syn_cf_real_train = c(qtl_dcr_syn_cf_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cf_tr, "[[", 2))
+  nndr_syn_cf_real_train = c(nndr_syn_cf_real_train, list(temp_nndr))
+  qtl_nndr_syn_cf_real_train = c(qtl_nndr_syn_cf_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  #between cr and train
+  l_dcr_nndr_cr_tr = evaluate_closeness(syn_dat_cr, training_set, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 1))
+  dcr_syn_cr_real_train = c(dcr_syn_cr_real_train, list(temp_dcr))
+  qtl_dcr_syn_cr_real_train = c(qtl_dcr_syn_cr_real_train,
+                                list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cr_tr, "[[", 2))
+  nndr_syn_cr_real_train = c(nndr_syn_cr_real_train, list(temp_nndr))
+  qtl_nndr_syn_cr_real_train = c(qtl_nndr_syn_cr_real_train,
+                                 list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  
+  #between cf and cf
+  
+  l_dcr_nndr_cf_cf = evaluate_closeness(syn_dat_cf, syn_dat_cf, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cf_cf, "[[", 1))
+  dcr_syn_cf_syn_cf = c(dcr_syn_cf_syn_cf, list(temp_dcr))
+  qtl_dcr_syn_cf_syn_cf = c(qtl_dcr_syn_cf_syn_cf,
+                            list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cf_cf, "[[", 2))
+  nndr_syn_cf_syn_cf = c(nndr_syn_cf_syn_cf, list(temp_nndr))
+  qtl_nndr_syn_cf_syn_cf = c(qtl_nndr_syn_cf_syn_cf,
+                             list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  #between cr and cr
+  
+  l_dcr_nndr_cr_cr = evaluate_closeness(syn_dat_cr, syn_dat_cr, w = w, nndr =
+                                          TRUE)
+  temp_dcr = unlist(lapply(l_dcr_nndr_cr_cr, "[[", 1))
+  dcr_syn_cr_syn_cr = c(dcr_syn_cr_syn_cr, list(temp_dcr))
+  qtl_dcr_syn_cr_syn_cr = c(qtl_dcr_syn_cr_syn_cr,
+                            list(quantile(temp_dcr, probs = c(0.05, 0.5))))
+  temp_nndr = unlist(lapply(l_dcr_nndr_cr_cr, "[[", 2))
+  nndr_syn_cr_syn_cr = c(nndr_syn_cr_syn_cr, list(temp_nndr))
+  qtl_nndr_syn_cr_syn_cr = c(qtl_nndr_syn_cr_syn_cr,
+                             list(quantile(temp_nndr, probs = c(0.05, 0.5))))
+  
+  count = count + 1
+  print(count)
+}
+```
+Wilcoxon signed rank tests
+```{r}
+# transform all nested lists into data frames
+qtl_dcr_syn_cf_real_train = t(as.data.frame(qtl_dcr_syn_cf_real_train))
+qtl_dcr_syn_cr_real_train = t(as.data.frame(qtl_dcr_syn_cr_real_train))
+qtl_dcr_syn_cf_syn_cf = t(as.data.frame(qtl_dcr_syn_cf_syn_cf))
+qtl_dcr_syn_cr_syn_cr = t(as.data.frame(qtl_dcr_syn_cr_syn_cr))
+
+qtl_nndr_syn_cf_real_train = t(as.data.frame(qtl_nndr_syn_cf_real_train))
+qtl_nndr_syn_cr_real_train = t(as.data.frame(qtl_nndr_syn_cr_real_train))
+qtl_nndr_syn_cf_syn_cf = t(as.data.frame(qtl_nndr_syn_cf_syn_cf))
+qtl_nndr_syn_cr_syn_cr = t(as.data.frame(qtl_nndr_syn_cr_syn_cr))
+
+table_dcr_nndr = as.data.frame(matrix(nrow = 9, ncol = 4))
+
+colnames(table_dcr_nndr) = c("0.05 dcr", "0.5 dcr", "0.05 nndr", "0.5 nndr")
+rownames(table_dcr_nndr) = c(
+  "mean(d(cf, tr))",
+  "mean(d(cr, tr))",
+  "mean(d(tr, tr))",
+  "mean(d(cf, cf))",
+  "mean(d(cr, cr))",
+  "p-val cf t3",
+  "p-val cr t3",
+  "p-val cf t4",
+  "p-val cr t4"
+)
+
+alphas = c(0.05, 0.5)
+
+p_val3 = c()
+p_val4 = c()
+
+for (i in 1:2) {
+  # dcr
+  table_dcr_nndr[1, i] = mean(qtl_dcr_syn_cf_real_train[, i])
+  table_dcr_nndr[2, i] = mean(qtl_dcr_syn_cr_real_train[, i])
+  table_dcr_nndr[3, i] = qtl_dcr_real_train_real_train[i]
+  table_dcr_nndr[4, i] = mean(qtl_dcr_syn_cf_syn_cf[, i])
+  table_dcr_nndr[5, i] = mean(qtl_dcr_syn_cr_syn_cr[, i])
+  
+  #test3
+  p_val3 = c(
+    p_val3,
+    wilcox.test(
+      qtl_dcr_syn_cf_real_train[, i],
+      qtl_dcr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val3 = c(
+    p_val3,
+    wilcox.test(
+      qtl_dcr_syn_cr_real_train[, i],
+      qtl_dcr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  
+  #test4
+  p_val4 = c(
+    p_val4,
+    wilcox.test(
+      qtl_dcr_syn_cf_syn_cf[, i],
+      qtl_dcr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val4 = c(
+    p_val4,
+    wilcox.test(
+      qtl_dcr_syn_cr_syn_cr[, i],
+      qtl_dcr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  
+  # nndr
+  table_dcr_nndr[1, i + 2] = mean(qtl_nndr_syn_cf_real_train[, i])
+  table_dcr_nndr[2, i + 2] = mean(qtl_nndr_syn_cr_real_train[, i])
+  table_dcr_nndr[3, i + 2] = qtl_nndr_real_train_real_train[i]
+  table_dcr_nndr[4, i + 2] = mean(qtl_nndr_syn_cf_syn_cf[, i])
+  table_dcr_nndr[5, i + 2] = mean(qtl_nndr_syn_cr_syn_cr[, i])
+  
+  #test3
+  p_val3 = c(
+    p_val3,
+    wilcox.test(
+      qtl_nndr_syn_cf_real_train[, i],
+      qtl_nndr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val3 = c(
+    p_val3,
+    wilcox.test(
+      qtl_nndr_syn_cr_real_train[, i],
+      qtl_nndr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  
+  #test4
+  p_val4 = c(
+    p_val4,
+    wilcox.test(
+      qtl_nndr_syn_cf_syn_cf[, i],
+      qtl_nndr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  p_val4 = c(
+    p_val4,
+    wilcox.test(
+      qtl_nndr_syn_cr_syn_cr[, i],
+      qtl_nndr_real_train_real_train[i],
+      "two.sided"
+    )$p.value
+  )
+  
+}
+
+# p_value adjustment
+
+#p_val3 = p.adjust(p_val3, method="BH")
+#p_val4 = p.adjust(p_val4, method="BH")
+
+# insert the p_values into the table
+
+for (i in 1:2) {
+  table_dcr_nndr[6, i] = p_val3[4 * (i - 1) + 1]
+  table_dcr_nndr[7, i] = p_val3[4 * i - 2]
+  table_dcr_nndr[6, i + 2] = p_val3[4 * i - 1]
+  table_dcr_nndr[7, i + 2] = p_val3[4 * i]
+  table_dcr_nndr[8, i] = p_val4[4 * (i - 1) + 1]
+  table_dcr_nndr[9, i] = p_val4[4 * i - 2]
+  table_dcr_nndr[8, i + 2] = p_val4[4 * i - 1]
+  table_dcr_nndr[9, i + 2] = p_val4[4 * i]
+}
+```
+Convert tables to latex tables
+```{r}
+library(xtable)
+dcr_nndr_xtable = xtable(table_dcr_nndr, type = "latex", digits = 8)
+
+print(dcr_nndr_xtable)
+
+```

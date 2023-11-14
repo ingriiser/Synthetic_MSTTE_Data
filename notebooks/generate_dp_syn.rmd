@@ -1,0 +1,280 @@
+---
+title: "Generate dp-synthetic data"
+author: "Ingvild Riiser"
+date: "2023-10-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("plyr")
+library("MASS")
+library("randomForest")
+library("datasets")
+library("dplyr")
+library("synthpop")
+library("coin")
+library("rstan")
+library("xtable")
+rstan_options(auto_write = TRUE)
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+source("../src/utility_evaluation.r")
+source("../src/dp_posterior_sampling.r")
+```
+
+In this markdown document we will generate a synthetic data set with a $\varepsilon-$dp guarantee. The synthetisation process is divided into first the synthetisation of the patients, then the synthetisation of $4$ Weibull regression models. Then a synthetic data set is generated from the combined model. 
+
+The synthetisation of the patients utilises the Python package *synthcity*. Because of current compatability issues between *synthcity* and both the R package *reticulate* which imports python code in R, and the R package *rpy2* which imports R code to python, we are not able to perform the dp synthetisation in a single program. 
+
+First, we will use R to save the real patients to a .csv file, which we will then import in a python program. The python program uses *synthcity* to generate synthetic patients and saves them to a .csv file. This file is then imported in R, and the rest of the synthetisation process is performed in R and STAN (using the package *rstan*).
+
+We begin by importing the data, defining the epsilon and saving the real patients to file. 
+
+```{r}
+set.seed(1906)
+
+data = real_data()
+train_test = train_test_set(data)
+train_set = train_test[[1]]
+test_set = train_test[[2]]
+
+train_pat = dat_patients(train_set)
+
+# save train_pat as .csv file
+write.csv(train_pat, "../data/train_pat.csv", row.names = FALSE)
+
+```
+
+## **Run python program *gen_patients.py***
+Now, run the python program *gen_patients.py* using $\varepsilon/2$ of the privacy budget, which reads *train_pat.csv* and generates a synthetic patients saved in *synth_pat_eps5_0.csv*. 
+
+We can then read this file. 
+
+```{r}
+syn_pat_dp = read.csv("../data/synth_pat_dp/dp_pat_eps5_0.csv", header=TRUE)
+```
+
+## Differentially private Weibull regression clock reset models
+Next we need to fit $4$ separate Weibull regression models based on the training data. They each have a privacy budget of $\varepsilon/4$. 
+```{r}
+set.seed(1759)
+n_train = nrow(train_pat)
+
+
+wei_fits_no_offset = fit_weibull_dp(train_set, eta = log(n_train), epsilon =
+                                      10 / 4)
+wei_fits_no_offset2 = fit_weibull_dp(train_set, eta = 3 * log(n_train), epsilon =
+                                       10 / 4)
+wei_fits_no_offset2_sme = fit_weibull_dp(train_set, eta = 3 * log(n_train), epsilon =
+                                           5 / 4)
+```
+Make a table that summarize the results.
+```{r}
+# row for each transition. mean and sd for all 5 parameters
+sum_table = as.data.frame(matrix(nrow = 4, ncol = 10))
+for (i in 1:4) {
+  #flatten the means and sds of each parameter
+  summary_vec = as.vector(apply(as.data.frame(
+    summary(wei_fits_no_offset2_sme[[i]]$fit_stan)$summary[c(1:5), c(1, 3)]
+  ), 1, c))
+  sum_table[i, ] = summary_vec
+  
+}
+
+
+colnames(sum_table) = c(
+  "mu lambda",
+  "sd lambda",
+  "mu beta0",
+  "sd beta0",
+  "mu beta1",
+  "sd beta1",
+  "mu beta2",
+  "sd beta2",
+  "mu beta3",
+  "sd beta3"
+)
+sum_xtable = xtable(t(sum_table),
+                    type = "latex",
+                    digits = 4)
+
+print(sum_xtable)
+
+sum_table = as.data.frame(matrix(nrow = 4, ncol = 10))
+for (i in 1:4) {
+  #flatten the means and sds of each parameter
+  summary_vec = as.vector(apply(as.data.frame(
+    summary(wei_fits_no_offset2[[i]]$fit_stan)$summary[c(1:5), c(1, 3)]
+  ), 1, c))
+  sum_table[i, ] = summary_vec
+  
+}
+colnames(sum_table) = c(
+  "mu lambda",
+  "sd lambda",
+  "mu beta0",
+  "sd beta0",
+  "mu beta1",
+  "sd beta1",
+  "mu beta2",
+  "sd beta2",
+  "mu beta3",
+  "sd beta3"
+)
+sum_xtable = xtable(t(sum_table),
+                    type = "latex",
+                    digits = 4)
+
+print(sum_xtable)
+```
+
+Table of the sampled parameters:
+```{r}
+params = as.data.frame(matrix(nrow = 4, ncol = 5))
+
+
+for (i in 1:4) {
+  params[i, ] = wei_fits_no_offset2_sme[[i]]$coefficients
+}
+
+params[, 1] = exp(params[, 1])
+params_xtable = xtable(params, type = "latex")
+
+print(params_xtable)
+```
+
+
+
+We can now generate the full eps-dp synthetic dataset. 
+
+When epsilon is small, we risk that the drawn weibull coefficients are so extreme that the function crashes due to that the sampled times are so large that R outputs NaN and we are not able to generate a synthetic data set.
+```{r}
+set.seed(2108)
+
+transition_times_states_syn = gen_sequence_man(syn_pat_dp, wei_fits_no_offset2_sme, clock =
+                                                 "reset")
+# here the training set is only used to create synthetic data with the same column names
+syn_dat_dp = seq_to_dataset(transition_times_states_syn, train_set,
+                            syn_pat_dp, censored = TRUE)
+
+write.csv(syn_dat_dp, "../data/syn_dat_dp.csv", row.names = FALSE)
+```
+MLE weifits
+```{r}
+wei_fits_mle = fit_weibull(train_set)
+```
+
+Generate a non-dp ds of same size
+```{r}
+set.seed(2244)
+syn_dat_not_dp = generate_full(train_set, 391)
+```
+
+Remove censored patients
+```{r}
+train_set_red = train_set[!train_set$status == 0, ]
+
+# remove censored patients
+set_patient_id = unlist(as.set(train_set_red$patient_id))
+
+# patients that are still alive at the time cut-off
+censored_patients = c()
+
+for (id in set_patient_id) {
+  sub = train_set_red[train_set_red$patient_id == id &
+                        train_set_red$status == 1, ]
+  nrows = nrow(sub)
+  # if only censored transitions
+  if (nrows == 0) {
+    censored_patients = c(censored_patients, id)
+  }
+  else{
+    # if the last transition is not a death
+    if (sub$to[nrows] != 3) {
+      censored_patients = c(censored_patients, id)
+    }
+  }
+}
+train_set_red = train_set_red[!(train_set_red$patient_id %in% censored_patients), ]
+```
+
+
+Evaluate distance between synthetic data and real data.
+```{r}
+
+train_syn_dist = evaluate_closeness(synthetic_data, train_set_red, nndr=TRUE)
+
+train_syn_dist_not_dp = evaluate_closeness(syn_dat_not_dp, train_set_red, nndr=TRUE)
+
+#intra dist
+train_train_dist = evaluate_closeness(train_set_red, train_set_red, nndr=TRUE)
+syn_syn_dp_dist = evaluate_closeness(synthetic_data, synthetic_data, nndr=TRUE)
+syn_syn_not_dp_dist = evaluate_closeness(syn_dat_not_dp, syn_dat_not_dp, nndr=TRUE)
+
+```
+Find quantiles
+
+```{r}
+#dcr
+dcr_train_syn_dist = unlist(lapply(train_syn_dist, "[[", 1))
+dcr_train_syn_dist_not_dp = unlist(lapply(train_syn_dist_not_dp, "[[", 1))
+dcr_train_train_dist = unlist(lapply(train_train_dist, "[[", 1))
+dcr_syn_syn_dp_dist = unlist(lapply(syn_syn_dp_dist, "[[", 1))
+dcr_syn_syn_not_dp_dist = unlist(lapply(syn_syn_not_dp_dist, "[[", 1))
+
+table_dcr = rbind(
+  quantile(dcr_train_syn_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(dcr_train_syn_dist_not_dp, c(0, 0.05, 0.5, 0.95)),
+  quantile(dcr_train_train_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(dcr_syn_syn_dp_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(dcr_syn_syn_not_dp_dist, c(0, 0.05, 0.5, 0.95))
+)
+
+#nndr
+nndr_train_syn_dist = unlist(lapply(train_syn_dist, "[[", 2))
+nndr_train_syn_dist_not_dp = unlist(lapply(train_syn_dist_not_dp, "[[", 2))
+nndr_train_train_dist = unlist(lapply(train_train_dist, "[[", 2))
+nndr_syn_syn_dp_dist = unlist(lapply(syn_syn_dp_dist, "[[", 2))
+nndr_syn_syn_not_dp_dist = unlist(lapply(syn_syn_not_dp_dist, "[[", 2))
+
+table_nndr = rbind(
+  quantile(nndr_train_syn_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(nndr_train_syn_dist_not_dp, c(0, 0.05, 0.5, 0.95)),
+  quantile(nndr_train_train_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(nndr_syn_syn_dp_dist, c(0, 0.05, 0.5, 0.95)),
+  quantile(nndr_syn_syn_not_dp_dist, c(0, 0.05, 0.5, 0.95))
+)
+
+rownames(table_nndr) = c(
+  "d(syn dp, train)",
+  "d(syn not dp, train)",
+  "d(train, train)",
+  "d(syn dp, syn dp)",
+  "d(syn not dp, syn not dp)"
+)
+
+rownames(table_dcr) = rownames(table_nndr)
+
+print("DCR")
+table_dcr
+print("NNDR")
+table_nndr
+
+```
+Convert to latex tables.
+```{r}
+dcr_xtable = xtable(table_dcr, type = "latex", digits = 5)
+
+print(dcr_xtable)
+
+nndr_xtable = xtable(table_nndr, type = "latex", digits = 5)
+print(nndr_xtable)
+```
+

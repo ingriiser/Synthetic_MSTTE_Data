@@ -1,0 +1,153 @@
+---
+title: "Visualise removing synth"
+author: "Ingvild Riiser"
+date: "2023-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(synthpop)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+```
+
+Set seed and generate 15000 synthetic points with synthpop
+```{r}
+set.seed(1010)
+
+# Load the iris dataset
+data(iris)
+
+# Select sepal and petal length variables
+real_data = iris[, c("Sepal.Length", "Petal.Length")]
+
+codebook.syn(real_data)
+
+# Generate synthetic data using synthpop
+synthetic_data = syn(data = real_data, k = 15000, method = "parametric")
+
+synthetic_data = synthetic_data$syn
+
+
+# Add a column to distinguish between real and synthetic data
+real_data$Type = "Real"
+synthetic_data$Type = "Synthetic"
+
+# Combine the real and synthetic data
+combined_data = rbind(real_data, synthetic_data)
+```
+
+Plot the real and synthetic data.
+```{r}
+# Create scatter plot with facets
+options(repr.plot.width = 7, repr.plot.height = 8)
+plot1 = ggplot(data = combined_data, aes(x = Sepal.Length, y = Petal.Length, color = Type)) +
+  geom_point(alpha = 0.5, size = 1) +
+  labs(x = "Sepal length", y = "Petal length", color = "Data type") +
+  scale_color_manual(values = c("Real" = "#381042", "Synthetic" = "#b65302")) +
+  theme_minimal() +
+  facet_wrap( ~ Type,
+              scales = "free_y",
+              ncol = 1,
+              labeller = labeller(Type = c(
+                "Real" = "(a)", "Synthetic" = "(b)"
+              ))) +
+  theme(
+    text = element_text(size = 16),
+    legend.position = "right",
+    # Position the legend to the right
+    legend.box = "horizontal",
+    # Display the legend horizontally
+    strip.text = element_text(hjust = 0, color = "black"),
+    # Align facet titles to the left
+    strip.background = element_rect(fill = "white", color = "white")
+  )  # Display the legend horizontally
+
+
+plot(plot1)
+ggsave(
+  "../figures/iris_real_synthetic_full.pdf",
+  plot1,
+  device = "pdf",
+  width = 6,
+  height = 6,
+  bg = "white",
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+```
+
+Remove the exact maches and plot the filtered synthetic data set
+```{r}
+remove_exact_matches = function(real_data, synthetic_data) {
+  exact_matches = semi_join(synthetic_data,
+                            real_data,
+                            by = c("Sepal.Length", "Petal.Length"))
+  filtered_synthetic_data = anti_join(synthetic_data,
+                                      exact_matches,
+                                      by = c("Sepal.Length", "Petal.Length"))
+  return(filtered_synthetic_data)
+}
+
+
+filtered_synthetic_data = remove_exact_matches(real_data, synthetic_data)
+options(repr.plot.width = 7, repr.plot.height = 4)
+
+plot2 = ggplot(data = filtered_synthetic_data,
+               aes(x = Sepal.Length, y = Petal.Length, color = "Synthetic \n filtered")) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_color_manual(values = "#b65302", name = "Data type") +
+  labs(x = "Sepal length", y = "Petal length", color = "Synthetic") +
+  theme_minimal() +
+  theme(text = element_text(size = 16))
+
+plot(plot2)
+ggsave(
+  "../figures/iris_syn_reduced.pdf",
+  plot2,
+  device = "pdf",
+  width = 6,
+  height = 3,
+  bg = "white",
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+```
+
+Plot synthetic filtered and real together
+```{r}
+combined_data = rbind(real_data, filtered_synthetic_data)
+combined_data$Type = c(rep("Real", nrow(real_data)), rep("Synthetic \n filtered", nrow(filtered_synthetic_data)))
+
+# Create scatter plot with combined data
+options(repr.plot.width = 7, repr.plot.height = 2)
+plot3 = ggplot(data = combined_data, aes(x = Sepal.Length, y = Petal.Length, color = Type)) +
+  geom_point(alpha = 0.5, size = 1) +
+  labs(x = "Sepal length", y = "Petal length", color = "Data type") +
+  scale_color_manual(values = c(
+    "Real" = "#381042",
+    "Synthetic \n filtered" = "#b65302"
+  )) +
+  theme_minimal() + theme(text = element_text(size = 16))
+plot(plot3)
+ggsave(
+  "../figures/iris_real_synthetic_red.pdf",
+  plot3,
+  device = "pdf",
+  width = 6,
+  height = 3,
+  bg = "white",
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+```
+

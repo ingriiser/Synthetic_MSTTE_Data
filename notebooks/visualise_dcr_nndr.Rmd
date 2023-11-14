@@ -1,0 +1,215 @@
+---
+title: "Visualise DCR and NNDR"
+author: "Ingvild Riiser"
+date: "2023-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Install and load necessary packages
+library(ggplot2)
+```
+
+Generate 10 random points.
+```{r}
+set.seed(1236)
+
+# colors
+c1 = "#431042"
+c2 = "#b65302"
+
+# Generate random points for stars and circles
+num_points = 5
+stars = data.frame(
+  x = runif(num_points),
+  y = runif(num_points),
+  category = "Synthetic"
+)
+circles = data.frame(
+  x = runif(num_points),
+  y = runif(num_points),
+  category = "Real"
+)
+
+data = rbind(stars, circles)
+
+# Create a scatter plot of the points
+scatter_plot = ggplot(data = data, aes(
+  x = x,
+  y = y,
+  color = category,
+  shape = category
+)) +
+  geom_point(size = 10) +
+  scale_shape_manual(values = c("Synthetic" = 18, "Real" = 19)) +
+  scale_color_manual(values = c(c1, c2)) +
+  scale_fill_manual(values = c(c1, c2)) +
+  labs(x = "", y = "") +
+  theme_void() + theme(legend.title = element_blank()) + theme(legend.text =
+                                                                 element_text(size = 14))
+
+# Display the scatter plot
+print(scatter_plot)
+```
+
+
+```{r}
+# For each star, find the closest circle
+
+dist_matrix = as.matrix(dist(data[, c("x", "y")], method = "euclidean"))
+
+closest_indices = apply(dist_matrix, 1, function(row)
+  which.min(row[6:10]))[1:5]
+
+second_closest_indices = apply(dist_matrix, 1, function(row)
+  order(row[6:10])[2])[1:5]
+
+# Create data frames for connecting lines
+connecting_lines = data.frame(
+  start_x = stars$x,
+  start_y = stars$y,
+  end_x = circles[closest_indices, "x"],
+  end_y = circles[closest_indices, "y"]
+)
+
+connecting_lines2 = data.frame(
+  start_x = stars$x,
+  start_y = stars$y,
+  end_x = circles[second_closest_indices, "x"],
+  end_y = circles[second_closest_indices, "y"]
+)
+
+
+
+star_lines = connecting_lines
+star_lines$category = "Synthetic"
+circle_lines = connecting_lines
+circle_lines$category = "Real"
+
+star_lines2 = connecting_lines2
+star_lines2$category = "Synthetic"
+circle_lines2 = connecting_lines2
+circle_lines2$category = "Real"
+```
+
+Plot DCR visualisation
+
+```{r}
+options(repr.plot.width = 7, repr.plot.height = 2)
+# Create a new plot connecting star points to their closest circle points with dotted lines
+connect_plot = scatter_plot + coord_fixed() +
+  geom_segment(
+    data = star_lines,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "solid",
+    color = "black",
+    size = 0.5
+  ) +
+  geom_segment(
+    data = circle_lines,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "solid",
+    color = "black",
+    size = 0.5
+  )
+
+ggsave(
+  "../figures/dcr_visualized.pdf",
+  connect_plot,
+  device = "pdf",
+  width = 6,
+  height = 4,
+  bg = "white",
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+
+# Display the connecting plot
+print(connect_plot)
+```
+Plot NNDR visualisation.
+
+```{r}
+options(repr.plot.width = 7, repr.plot.height = 2)
+# Create a new plot connecting star points to their closest circle points with dotted lines
+connect_plot = scatter_plot + coord_fixed() +
+  geom_segment(
+    data = star_lines,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "solid",
+    color = "black",
+    size = 0.5
+  ) +
+  geom_segment(
+    data = circle_lines,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "solid",
+    color = "black",
+    size = 0.5
+  ) +
+  geom_segment(
+    data = star_lines2,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "dotted",
+    color = "black",
+    size = 0.5
+  ) +
+  geom_segment(
+    data = circle_lines2,
+    aes(
+      x = start_x,
+      y = start_y,
+      xend = end_x,
+      yend = end_y
+    ),
+    linetype = "dotted",
+    color = "black",
+    size = 0.5
+  )
+ggsave(
+  "../figures/nndr_visualized.pdf",
+  connect_plot,
+  device = "pdf",
+  width = 6,
+  height = 4,
+  bg = "white",
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+# Display the connecting plot
+print(connect_plot)
+```
+

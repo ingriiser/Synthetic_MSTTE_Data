@@ -1,0 +1,179 @@
+---
+title: "Demo Distance Expose Privacy Breach"
+author: "Ingvild Riiser"
+date: "2023-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library("MASS")
+library("ggplot2")
+library("patchwork")
+library("gridExtra")
+
+# colors
+c1 = "#431042"
+c2 = "#b65302"
+```
+
+Sample the data points
+```{r}
+
+# sample from a bivariate normal distribution
+set.seed(1129)
+sample_size = 10
+sample_meanvector = c(0, 0)
+sample_covariance_matrix = matrix(c(2,-1,-1, 1),
+                                  ncol = 2)
+
+
+
+# create bivariate normal distribution
+real_df = data.frame(
+  mvrnorm(n = sample_size,
+          mu = sample_meanvector,
+          Sigma = sample_covariance_matrix),
+  category = "Real"
+)
+
+synthetic_private_df = data.frame(
+  mvrnorm(n = sample_size, mu = sample_meanvector,
+          Sigma = sample_covariance_matrix),
+  category = "Synthetic"
+)
+
+# add random noise to each point in real_df to generate synthetic data that is not private
+noise_sd = 0.2
+noise_x = rnorm(nrow(real_df), mean = 0, sd = noise_sd)
+noise_y = rnorm(nrow(real_df), mean = 0, sd = noise_sd)
+
+# Add the noise to the original dataframe
+synthetic_not_private_df = data.frame(
+  X1 = real_df$X1 + noise_x,
+  X2 = real_df$X2 + noise_y,
+  category = "Synthetic"
+)
+```
+
+Create the plots of the synthetic and real points.
+```{r}
+# plot real and private synthetic
+scatter_plot1 =
+  ggplot(
+    data = rbind(real_df, synthetic_private_df),
+    aes(
+      x = X1,
+      y = X2,
+      color = category,
+      shape = category
+    )
+  ) +
+  geom_point(size = 5) +
+  scale_shape_manual(values = c("Synthetic" = 18, "Real" = 19)) +
+  scale_color_manual(values = c(c1, c2)) +
+  scale_fill_manual(values = c(c1, c2)) +
+  labs(x = "x", y = "y") + ggtitle("(a)") +
+  xlim(-2, 2) + ylim(-2, 2) +
+  theme_bw() +
+  theme(
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    # Adjust legend font size
+    plot.title = element_text(size = 14),
+    # Adjust title font size
+    axis.title = element_text(size = 12)
+  ) +  # Adjust axis label font size
+  coord_fixed(ratio = 1)  # Set equal aspect ratio
+
+# Create the second scatter plot with equal aspect ratio and increased font sizes
+scatter_plot2 =
+  ggplot(
+    data = rbind(real_df, synthetic_not_private_df),
+    aes(
+      x = X1,
+      y = X2,
+      color = category,
+      shape = category
+    )
+  ) +
+  geom_point(size = 5) +
+  scale_shape_manual(values = c("Synthetic" = 18, "Real" = 19)) +
+  scale_color_manual(values = c(c1, c2)) +
+  scale_fill_manual(values = c(c1, c2)) +
+  labs(x = "x", y = "y") + ggtitle("(b)") +
+  xlim(-2, 2) + ylim(-2, 2) +
+  theme_bw() +
+  theme(
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    # Adjust legend font size
+    plot.title = element_text(size = 14),
+    # Adjust title font size
+    axis.title = element_text(size = 12)
+  ) +  # Adjust axis label font size
+  coord_fixed(ratio = 1)  # Set equal aspect ratio
+
+# Combine the two plots with a common legend
+
+combined_plot = scatter_plot1 + scatter_plot2 +
+  plot_layout(ncol = 2, guides = "collect")
+
+
+# Display the combined plot
+print(combined_plot)
+ggsave(
+  "../figures/demo_distance_expose_privacy_breach.pdf",
+  combined_plot,
+  device = "pdf",
+  width = 6,
+  height = 4,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+```
+
+
+Find DCR and NNDR scores based on euclidean distances and make the table.
+```{r}
+# find dcr and nndr between synthetic private and real
+data = rbind(synthetic_private_df, real_df)
+dist_matrix = as.matrix(dist(data[, c("X1", "X2")], method = "euclidean"))
+
+dcr1 = apply(dist_matrix, 1, function(row)
+  min(row[11:20]))[1:10]
+
+second_dcr1 = apply(dist_matrix, 1, function(row)
+  sort(row[11:20])[2])[1:10]
+
+nndr1 = dcr1 / second_dcr1
+
+# find dcr and nndr between real and synthetic not private
+data = rbind(synthetic_not_private_df, real_df)
+dist_matrix2 = as.matrix(dist(data[, c("X1", "X2")], method = "euclidean"))
+
+dcr2 = apply(dist_matrix2, 1, function(row)
+  min(row[11:20]))[1:10]
+
+second_dcr2 = apply(dist_matrix2, 1, function(row)
+  sort(row[11:20])[2])[1:10]
+
+nndr2 = dcr2 / second_dcr2
+
+quantile(dcr1, probs = c(0, 0.05, 0.5, 0.95))
+quantile(dcr2, probs = c(0, 0.05, 0.5, 0.95))
+quantile(nndr1, probs = c(0, 0.05, 0.5, 0.95))
+quantile(nndr2, probs = c(0, 0.05, 0.5, 0.95))
+
+row1 = c(quantile(dcr1, probs = c(0.05, 0.5)), quantile(nndr1, probs = c(0.05, 0.5)))
+
+table = rbind(row1, c(quantile(dcr2, probs = c(0.05, 0.5)), quantile(nndr2, probs = c(0.05, 0.5))))
+library(xtable)
+table_x = xtable(table, type = "latex", digits = 3)
+print(table_x)
+```

@@ -1,0 +1,72 @@
+---
+title: "Left Truncation Plot"
+author: "Ingvild Riiser"
+date: "2023-11-14"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Import libraries
+```{r}
+library("truncdist")
+library("ggplot2")
+```
+
+Define the distributions
+```{r}
+shape = 1.5
+
+scale_reg = 1
+
+pdf = function(x){
+  dtrunc(x,spec = "weibull",  a = 2, b = 4, shape = shape, scale = scale_reg)
+}
+
+pdf2 = function(x){
+  dtrunc(x,spec = "weibull",  a = 1, b = 4, shape = shape, scale = scale_reg)
+}
+```
+
+Make the plots
+```{r}
+df = data.frame(x = c(0, 4))
+
+
+p1 = ggplot(df, aes(x = x)) +
+  stat_function(fun = dweibull, args = list(shape=shape, scale=scale_reg))+
+  xlim(0, 4) + ylim(0,2.2) + theme_classic() + xlab("t") + ylab("f(t)")+
+  ggtitle("(a)") +
+  geom_vline(xintercept = 1, colour = '#b65302')+
+  geom_vline(xintercept = 2, colour = "#431042")
+p1
+
+blank_data = subset(df, x < 1)
+
+
+
+p2 = ggplot(df, aes(x = x)) +
+  geom_blank(data = blank_data, aes(x = x, y = pdf2(x))) +  # Blank out the portion before the specified point
+  geom_function(fun = function(x) ifelse(x >= 1, pdf2(x), NA)) +
+  xlim(0, 4) + ylim(0,2.2) + theme_classic() + xlab("t") + ylab("f(t)")+
+  ggtitle("(b)") +
+  geom_vline(xintercept = 1, colour = '#b65302')
+p2
+
+blank_data = subset(df, x < 2)
+p3 = ggplot(df, aes(x = x)) +
+  geom_function(fun = function(x) ifelse(x >= 2, pdf(x), NA)) +
+  xlim(0, 4) + ylim(0,2.2) + theme_classic() + xlab("t") + ylab("f(t)")+
+  ggtitle("(c)") +
+  geom_vline(xintercept = 2, colour = "#431042")
+p3
+
+plots = list(p1, p2, p3)
+multiplot = do.call(grid.arrange, c(plots, ncol = 1))
+
+ggsave("../figures/trunc_forward.pdf", multiplot, device = "pdf", width = 6, height = 6, units = "in", dpi = 300, colormodel = "cmyk")
+
+```
+

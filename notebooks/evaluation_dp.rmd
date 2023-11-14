@@ -1,0 +1,87 @@
+
+---
+  title: "Evaluation DP"
+author: "Ingvild Riiser"
+date: "2023-04-10"
+output:
+  pdf_document: default
+html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE}
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("plyr")
+library("MASS")
+library("randomForest")
+library("datasets")
+library("dplyr")
+library("tidyr")
+library("synthpop")
+library("xtable")
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+```
+
+
+
+Distance evaluation for dp
+```{r}
+set.seed(1906)
+
+data = real_data(censored = FALSE, status = TRUE)
+train_test = train_test_set(data, 0.2)
+training_set = train_test[[1]]
+test_set = train_test[[2]]
+syn_dat_dp = read.csv("syn_dat_dp.csv", header = TRUE)
+
+
+pat_train = dat_patients(training_set)
+pat_test = dat_patients(test_set)
+
+j = 1
+# find the dcr and nndr values using k generated
+# synthetic data sets (both time forward and time reset), and find the
+# dcr and nndr distance vectors between data_syn_forward and real_train and
+# data_syn_reset and real_train
+# calculate the alpha percentiles for both dcr and nndr
+
+w = 1 - 1 / 12.4
+
+l_dcr_nndr_dp_tr = evaluate_closeness(syn_dat_dp, training_set, w = w)
+l_dcr_nndr_tr_tr = evaluate_closeness(training_set, training_set, w = w)
+l_dcr_nndr_dp_dp = evaluate_closeness(syn_dat_dp, syn_dat_dp, w = w)
+
+
+dcr_dp_train = unlist(lapply(l_dcr_nndr_dp_tr, "[[", 1))
+nndr_dp_train = unlist(lapply(l_dcr_nndr_dp_tr, "[[", 2))
+
+dcr_train_train = unlist(lapply(l_dcr_nndr_tr_tr, "[[", 1))
+nndr_train_train = unlist(lapply(l_dcr_nndr_tr_tr, "[[", 2))
+
+dcr_dp_dp = unlist(lapply(l_dcr_nndr_dp_dp, "[[", 1))
+nndr_dp_dp = unlist(lapply(l_dcr_nndr_dp_dp, "[[", 2))
+
+dist_dp = as.data.frame(matrix(nrow = 3, ncol = 4))
+
+dist_dp[1, 1:2] = quantile(dcr_dp_train, probs = c(0.05, 0.5))
+dist_dp[1, 3:4] = quantile(nndr_dp_train, probs = c(0.05, 0.5))
+
+dist_dp[2, 1:2] = quantile(dcr_dp_dp, probs = c(0.05, 0.5))
+dist_dp[2, 3:4] = quantile(nndr_dp_dp, probs = c(0.05, 0.5))
+
+dist_dp[3, 1:2] = quantile(dcr_train_train, probs = c(0.05, 0.5))
+dist_dp[3, 3:4] = quantile(nndr_train_train, probs = c(0.05, 0.5))
+
+dist_dp_xtable = xtable(dist_dp, type = "latex", digits = 4)
+
+print(dist_dp_xtable)
+
+```

@@ -1,0 +1,108 @@
+---
+title: "State Transition Graphs"
+author: "Ingvild Riiser"
+date: "2023-11-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("DiagrammeR")
+library("rsvg")
+```
+
+Make state illness-death model with recovery.
+```{r}
+grViz(
+  "
+  digraph {
+    layout = fdp
+    node [shape = box, style=filled, fixedsize=True, width=1, color='#72c6a3']
+    edge [color='#445f45', arrowhead=vee]
+
+    A[label = 'Healthy (1)', pos='-2,1!']
+    B[label = 'Sick (2)', pos='2,1!']
+    C[label = 'Death (3)', pos='0,0!']
+
+    A->B[label='Transition 1']
+    A->C[label='Transition 2']
+    B->A[label='Transition 3']
+    B->C[label='Transition 4']
+  }
+"
+)
+```
+
+Make models for the NAV example in Chapter 2.
+
+```{r}
+
+grViz(
+  "
+  digraph {
+    layout = fdp
+    node [shape = box, style=filled, fixedsize=True, width=1, color='#72c6a3']
+    edge [color=black, arrowhead=vee]
+
+    A[label = 'Unemployed', pos='-1,0!']
+    B[label = 'Employed', pos='1,0!']
+
+    A->B
+  }
+"
+)
+
+grViz(
+  "
+  digraph {
+    layout = fdp
+    graph [splines=true]
+    node [shape = box, style=filled, fixedsize=True, width=1, color='#72c6a3']
+    edge [color='#445f45', arrowhead=vee]
+
+    A[label = 'Unemployed', pos='-1,0!']
+    B[label = 'Employed', pos='1,1!']
+    C[label = 'Sick', pos='1,0!']
+    D[label = 'Retired', pos='1,-1!']
+
+    A->B
+    A->C
+    A->D
+  }
+"
+)
+
+
+
+grViz(
+  "
+  digraph {
+    layout = fdp
+    graph [splines=true]
+    node [shape = box, style=filled, fixedsize=True, width=1,color='#72c6a3']
+    edge [color='#445f45', arrowhead=vee, splines=curved]
+
+    A[label = 'Unemployed', pos='-1,0!']
+    B[label = 'Employed', pos='1,1!']
+    C[label = 'Sick', pos='1,0!']
+    D[label = 'Retired', pos='1,-1!']
+
+    A->B
+    A->C
+    A->D
+    B->A
+    B->C
+    B->D[headport='ne', tailport='se']
+    C->A
+    C->B
+    C->D
+
+
+  }
+"
+)
+```
+

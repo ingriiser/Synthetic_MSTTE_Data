@@ -1,0 +1,588 @@
+---
+title: "Utility Evaluation"
+author: "Ingvild Riiser"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Setup. 
+```{r}
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("plyr")
+library("MASS")
+library("randomForest")
+library("datasets")
+library("dplyr")
+library("tidyr")
+library("xtable")
+library("synthpop")
+library("psych")
+library("survival")
+library("survminer")
+library("ggplot2")
+library("gridExtra")
+library("ggcorrplot")
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+
+```
+Data sets
+```{r}
+set.seed(1906)
+
+data = real_data()
+train_test = train_test_set(data)
+train_data = train_test[[1]]
+test_data = train_test[[2]]
+
+
+
+# generate synthetic data sets
+
+syn_cf = generate_full(train_data, 391, clock = "forward", censored = TRUE)
+syn_cr = generate_full(train_data, 391, clock = "reset", censored = TRUE)
+
+# patient data
+train_pat = dat_patients(train_data)
+test_pat = dat_patients(test_data)
+
+cf_pat = dat_patients(syn_cf)
+cr_pat = dat_patients(syn_cr)
+```
+KS and Chi-squared tests
+```{r}
+set.seed(1934)
+p_vals = matrix(nrow = 2, ncol = 4)
+
+# between train and cf
+# continuous
+
+
+p_vals[1, 2] = ks.test(train_pat$age, cf_pat$age)$p.value
+n = nrow(train_pat)
+#discrete
+
+
+p_vals[1, 1] = chisq.test(table(cf_pat$treatment_grp),
+                          p = table(train_pat$treatment_grp) / n)$p.value
+
+p_vals[1, 3] = chisq.test(table(cf_pat$female),
+                          p = table(train_pat$female) / n)$p.value
+p_vals[1, 4] = chisq.test(table(cf_pat$starting_state),
+                          p = table(train_pat$starting_state) / n)$p.value
+
+
+# between train and cr
+# continuous
+p_vals[2, 2] = ks.test(train_pat$age, cr_pat$age)$p.value
+
+#discrete
+p_vals[2, 1] = chisq.test(table(cr_pat$treatment_grp),
+                          p = table(train_pat$treatment_grp) / n)$p.value
+
+p_vals[2, 3] = chisq.test(table(cr_pat$female),
+                          p = table(train_pat$female) / n)$p.value
+p_vals[2, 4] = chisq.test(table(cr_pat$starting_state),
+                          p = table(train_pat$starting_state) / n)$p.value
+
+xtab = xtable(p_vals, type = "latex")
+
+print(xtab, include.rownames = FALSE)
+
+```
+Plot the data
+```{r}
+df_list = list(train_pat, cf_pat, cr_pat)
+title_list = list("(a)", "(b)", "(c)")
+
+histograms = lapply(1:length(df_list), function(i) {
+  ggplot(df_list[[i]], aes(x = age)) +
+    geom_histogram(
+      binwidth = 1,
+      fill = '#b65302',
+      color = "#b65302"
+    ) +
+    labs(title = title_list[[i]]) + xlab("starting age") +
+    theme_classic()
+})
+
+multiplot = do.call(grid.arrange, c(histograms, ncol = 3))
+ggsave(
+  "../figures/distributions_age.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+print(multiplot)
+```
+
+Frequency tables
+```{r}
+
+ft = sapply(1:length(df_list), function(i) {
+        c(unlist(table(df_list[[i]]$treatment_grp)),
+          unlist(table(df_list[[i]]$female)),
+          unlist(table(df_list[[i]]$starting_state)))
+})
+
+ft = t(ft)
+
+freq_table = xtable(ft, type="latex")
+
+print(freq_table, include.rownames=FALSE)
+```
+Correlation plots.
+```{r}
+
+
+cor_train = cor(train_pat[2:5], method = "spearman")
+cor_test = cor(test_pat[2:5], method = "spearman")
+cor_cf = cor(cf_pat[2:5], method = "spearman")
+cor_cr = cor(cr_pat[2:5], method = "spearman")
+
+colnames(cor_train) = rownames(cor_train) = colnames(cor_cf) = rownames(cor_cf) =
+  colnames(cor_cr) = rownames(cor_cr) =  c("Treatment group", "Starting age", "Female", "Starting state")
+
+
+plot1 = ggcorrplot(
+  cor_train,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  lab = TRUE,
+  title = "(a)",
+  show.legend = FALSE,
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot2 = ggcorrplot(
+  cor_cf,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(b)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot3 = ggcorrplot(
+  cor_cr,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(c)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+
+
+multiplot = do.call(grid.arrange, c(list(plot1, plot2, plot3), ncol = 3))
+ggsave(
+  "../figures/corr_plot_all.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+mean_corr(cor_train, cor_cf)
+mean_corr(cor_train, cor_cr)
+mean_corr(cor_train, cor_test)
+```
+Compare coefficients of clock-reset Weibull regression
+```{r}
+set.seed(1246)
+# same as the ones used in the synthesiser. All will be fitted to a clock-reset model
+wei_fits_train = fit_weibull(train_data, clock = "reset")
+wei_fits_cf = fit_weibull(syn_cf, clock = "reset")
+wei_fits_cr = fit_weibull(syn_cr, clock = "reset")
+
+tab_par = matrix(NA, nrow = 12, ncol = 5)
+
+ind = 1
+for (i in 1:4) {
+  tab_par[ind,] = wei_fits_train[[i]]$res[, 1]
+  tab_par[ind + 1,] = wei_fits_cf[[i]]$res[, 1]
+  tab_par[ind + 2,] = wei_fits_cr[[i]]$res[, 1]
+  ind = ind + 3
+}
+tab_par = cbind(c(1, NA, NA, 2, NA, NA, 3, NA, NA, 4, NA, NA),
+                rep(c(
+                  "$realdattrain$", "$syndatcf$", "$syndatcr$"
+                ), 4),
+                tab_par)
+tab_par = as.data.frame(tab_par)
+tab_par[] =
+  lapply(tab_par, function(x)
+    if (anyNA(y = as.numeric(x)))
+      x
+    else
+      y)
+xtab = xtable(tab_par, type = "latex", digits = 4)
+
+print(xtab, include.rownames = FALSE)
+
+
+# find iou
+tab_iou = matrix(NA, nrow = 8, ncol = 5)
+ind = 1
+for (i in 1:4) {
+  for (j in 1:5) {
+    tab_iou[ind, j] = iou_score(wei_fits_train[[i]]$res[j, 2:3],
+                                wei_fits_cf[[i]]$res[j, 2:3])
+    tab_iou[ind + 1, j] = iou_score(wei_fits_train[[i]]$res[j, 2:3],
+                                    wei_fits_cr[[i]]$res[j, 2:3])
+  }
+  ind = ind + 2
+}
+tab_iou = cbind(c(1, NA, 2, NA, 3, NA, 4, NA),
+                rep(c("$syndatcf$", "$syndatcr$"), 4),
+                tab_iou)
+tab_iou = as.data.frame(tab_iou)
+tab_iou[] =
+  lapply(tab_iou, function(x)
+    if (anyNA(y = as.numeric(x)))
+      x
+    else
+      y)
+xtab_iou = xtable(tab_iou, type = "latex", digits = 2)
+
+print(xtab_iou, include.rownames = FALSE)
+
+# average iou cr
+avg_iou_cr = median(unlist(tab_iou[c(2, 4, 6, 8), 3:7]))
+avg_iou_cr
+avg_iou_cf = median(unlist(tab_iou[c(1, 3, 5, 7), 3:7]))
+avg_iou_cf
+```
+Compare coefficients of clock-forward Weibull regression
+```{r}
+set.seed(1306)
+# same as the ones used in the synthesiser. All will be fitted to a clock-reset model
+wei_fits_train = fit_weibull(train_data, clock = "forward")
+wei_fits_cf = fit_weibull(syn_cf, clock = "forward")
+
+syn_cr2 = generate_full(train_data, clock = "reset", k = n)
+wei_fits_cr = fit_weibull(syn_cr2, clock = "forward")
+
+tab_par2 = matrix(NA, nrow = 12, ncol = 5)
+
+ind = 1
+for (i in 1:4) {
+  tab_par2[ind, ] = wei_fits_train[[i]]$res[, 1]
+  tab_par2[ind + 1, ] = wei_fits_cf[[i]]$res[, 1]
+  tab_par2[ind + 2, ] = wei_fits_cr[[i]]$res[, 1]
+  ind = ind + 3
+}
+tab_par2 = cbind(c(1, NA, NA, 2, NA, NA, 3, NA, NA, 4, NA, NA),
+                 rep(c(
+                   "$realdattrain$", "$syndatcf$", "$syndatcr$"
+                 ), 4),
+                 tab_par2)
+tab_par2 = as.data.frame(tab_par2)
+tab_par2[] = lapply(tab_par2, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab = xtable(tab_par2, type = "latex", digits = 4)
+
+print(xtab, include.rownames = FALSE)
+
+# find iou
+tab_iou = matrix(NA, nrow = 8, ncol = 5)
+ind = 1
+for (i in 1:4) {
+  for (j in 1:5) {
+    tab_iou[ind, j] = iou_score(wei_fits_train[[i]]$res[j, 2:3],
+                                wei_fits_cf[[i]]$res[j, 2:3])
+    tab_iou[ind + 1, j] = iou_score(wei_fits_train[[i]]$res[j, 2:3],
+                                    wei_fits_cr[[i]]$res[j, 2:3])
+  }
+  ind = ind + 2
+}
+tab_iou = cbind(c(1, NA, 2, NA, 3, NA, 4, NA),
+                rep(c("$syndatcf$", "$syndatcr$"), 4),
+                tab_iou)
+tab_iou = as.data.frame(tab_iou)
+tab_iou[] = lapply(tab_iou, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab_iou2 = xtable(tab_iou, type = "latex", digits = 2)
+
+print(xtab_iou2, include.rownames = FALSE)
+
+# average iou cr
+avg_iou_cr = median(unlist(tab_iou[c(2, 4, 6, 8), 3:7]))
+avg_iou_cr
+avg_iou_cf = median(unlist(tab_iou[c(1, 3, 5, 7), 3:7]))
+avg_iou_cf
+```
+Cox-regression clock reset
+```{r}
+set.seed(1306)
+# same as the ones used in the synthesiser. All will be fitted to a clock-reset model
+cox_fits_train = fit_cox(train_data, clock = "reset")
+cox_fits_cf = fit_cox(syn_cf, clock = "reset")
+
+cox_fits_cr = fit_cox(syn_cr, clock = "reset")
+
+tab_cox = matrix(NA, nrow = 12, ncol = 3)
+
+ind = 1
+for (i in 1:4) {
+  tab_cox[ind, ] = cox_fits_train[[i]]$coefficients
+  tab_cox[ind + 1, ] = cox_fits_cf[[i]]$coefficients
+  tab_cox[ind + 2, ] = cox_fits_cr[[i]]$coefficients
+  ind = ind + 3
+}
+tab_cox = cbind(c(1, NA, NA, 2, NA, NA, 3, NA, NA, 4, NA, NA),
+                rep(c(
+                  "$realdattrain$", "$syndatcf$", "$syndatcr$"
+                ), 4),
+                tab_cox)
+tab_cox = as.data.frame(tab_cox)
+tab_cox[] = lapply(tab_cox, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab = xtable(tab_cox, type = "latex", digits = 4)
+
+print(xtab, include.rownames = FALSE)
+
+# find iou
+tab_iou_cox = matrix(NA, nrow = 8, ncol = 3)
+ind = 1
+for (i in 1:4) {
+  for (j in 1:3) {
+    tab_iou_cox[ind, j] = iou_score(confint(cox_fits_train[[i]])[j, ],
+                                    confint(cox_fits_cf[[i]])[j, ])
+    tab_iou_cox[ind + 1, j] = iou_score(confint(cox_fits_train[[i]])[j, ],
+                                        confint(cox_fits_cr[[i]])[j, ])
+  }
+  ind = ind + 2
+}
+tab_iou_cox = cbind(c(1, NA, 2, NA, 3, NA, 4, NA),
+                    rep(c("$syndatcf$", "$syndatcr$"), 4),
+                    tab_iou_cox)
+tab_iou_cox = as.data.frame(tab_iou_cox)
+tab_iou_cox[] = lapply(tab_iou_cox, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab_iou_cox = xtable(tab_iou_cox, type = "latex", digits = 2)
+
+print(xtab_iou_cox, include.rownames = FALSE)
+
+# average iou cr
+avg_iou_cr = median(unlist(tab_iou_cox[c(2, 4, 6, 8), 3:5]))
+avg_iou_cr
+avg_iou_cf = median(unlist(tab_iou_cox[c(1, 3, 5, 7), 3:5]))
+avg_iou_cf
+```
+Clock-forward cox regression
+```{r}
+set.seed(1306)
+# same as the ones used in the synthesiser. All will be fitted to a clock-reset model
+# modify train data because fit_cox treats tiny differences between Tstart and Tstop as
+# a tie
+train_data_mod = train_data
+train_data_mod$Tstop = train_data$Tstop + 0.0000001
+cox_fits_train = fit_cox(train_data_mod, clock = "forward")
+cox_fits_cf = fit_cox(syn_cf, clock = "forward")
+
+cox_fits_cr = fit_cox(syn_cr, clock = "forward")
+
+tab_cox = matrix(NA, nrow = 12, ncol = 3)
+
+ind = 1
+for (i in 1:4) {
+  tab_cox[ind, ] = cox_fits_train[[i]]$coefficients
+  tab_cox[ind + 1, ] = cox_fits_cf[[i]]$coefficients
+  tab_cox[ind + 2, ] = cox_fits_cr[[i]]$coefficients
+  ind = ind + 3
+}
+tab_cox = cbind(c(1, NA, NA, 2, NA, NA, 3, NA, NA, 4, NA, NA),
+                rep(c(
+                  "$realdattrain$", "$syndatcf$", "$syndatcr$"
+                ), 4),
+                tab_cox)
+tab_cox = as.data.frame(tab_cox)
+tab_cox[] = lapply(tab_cox, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab = xtable(tab_cox, type = "latex", digits = 4)
+
+print(xtab, include.rownames = FALSE)
+
+# find iou
+tab_iou_cox2 = matrix(NA, nrow = 8, ncol = 3)
+ind = 1
+for (i in 1:4) {
+  for (j in 1:3) {
+    tab_iou_cox2[ind, j] = iou_score(confint(cox_fits_train[[i]])[j, ],
+                                     confint(cox_fits_cf[[i]])[j, ])
+    tab_iou_cox2[ind + 1, j] = iou_score(confint(cox_fits_train[[i]])[j, ],
+                                         confint(cox_fits_cr[[i]])[j, ])
+  }
+  ind = ind + 2
+}
+tab_iou_cox2 = cbind(c(1, NA, 2, NA, 3, NA, 4, NA),
+                     rep(c("$syndatcf$", "$syndatcr$"), 4),
+                     tab_iou_cox2)
+tab_iou_cox2 = as.data.frame(tab_iou_cox2)
+tab_iou_cox2[] = lapply(tab_iou_cox2, function(x)
+  if (anyNA(y = as.numeric(x)))
+    x
+  else
+    y)
+xtab_iou_cox2 = xtable(tab_iou_cox2, type = "latex", digits = 2)
+
+print(xtab_iou_cox2, include.rownames = FALSE)
+
+avg_iou_cr = median(unlist(tab_iou_cox2[c(2, 4, 6, 8), 3:5]))
+avg_iou_cr
+avg_iou_cf = median(unlist(tab_iou_cox2[c(1, 3, 5, 7), 3:5]))
+avg_iou_cf
+```
+
+Kaplan-Meier Curves
+```{r}
+# combine train_dat and syn_dat with labels
+
+syn_cf$syn = 1
+syn_cr$syn = 1
+train_data$syn = 0
+
+train_cf = rbind(syn_cf, train_data)
+train_cr = rbind(syn_cr, train_data)
+
+plots_cf = list()
+plots_cr = list()
+
+p_placements_cf = list(c(25, 0.9), c(25, 0.9), c(5, 0.9), c(5, 0.9))
+p_placements_cr = list(c(35, 0.9), c(35, 0.9), c(5, 0.9), c(5, 0.9))
+titles_list = list("(a)", "(b)", "(c)", "(d)")
+
+for (i in (1:4)) {
+  fit_cf  = survfit(
+    Surv(years, status) ~ syn,
+    type = "kaplan-meier",
+    data = train_cf,
+    subset = (trans == i)
+  )
+  
+  ggsurv = ggsurvplot(
+    fit_cf,
+    data = train_cf,
+    palette = c("#381042", '#b65302'),
+    conf.int = TRUE,
+    pval = TRUE,
+    censor = FALSE,
+    censor.size = 2,
+    censor.shape = "|",
+    pval.coord = p_placements_cf[[i]],
+    legend.labs = c("Real", "Synthetic")
+  )
+  ggsurv$plot = ggsurv$plot +
+    theme(legend.text = element_text(
+      size = 12,
+      color = "black",
+      face = "bold"
+    )) +
+    labs(title = titles_list[[i]])
+  plots_cf[[i]] = ggsurv$plot
+  
+  fit_cr  = survfit(
+    Surv(years, status) ~ syn,
+    type = "kaplan-meier",
+    data = train_cr,
+    subset = (trans == i)
+  )
+  
+  ggsurv2 = ggsurvplot(
+    fit_cr,
+    data = train_cr,
+    palette = c("#381042", '#b65302'),
+    conf.int = TRUE,
+    pval = TRUE,
+    censor = FALSE,
+    censor.size = 2,
+    censor.shape = "|",
+    pval.coord = p_placements_cr[[i]],
+    legend.labs = c("Real", "Synthetic")
+  )
+  ggsurv2$plot = ggsurv2$plot +
+    labs(title = titles_list[[i]]) +
+    theme(legend.text = element_text(
+      size = 12,
+      color = "black",
+      face = "bold"
+    ))
+  plots_cr[[i]] = ggsurv2$plot
+}
+
+
+multiplot = do.call(grid.arrange, c(plotlist = plots_cf, ncol = 2))
+
+ggsave(
+  "../figures/km_cf.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 4.5,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+multiplot2 = do.call(grid.arrange, c(plotlist = plots_cr, ncol = 2))
+ggsave(
+  "../figures/km_cr.pdf",
+  multiplot2,
+  device = "pdf",
+  width = 6,
+  height = 4.5,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+```
+
+

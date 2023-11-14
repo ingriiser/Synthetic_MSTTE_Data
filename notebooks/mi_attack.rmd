@@ -1,0 +1,213 @@
+---
+title: "Membership Inference Attacks"
+author: "Ingvild Riiser"
+date: "2023-05-08"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, warning=FALSE}
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("plyr")
+library("MASS")
+library("randomForest")
+library("datasets")
+library("dplyr")
+library("tidyr")
+library("synthpop")
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+source("../src/mi_attack.r")
+```
+
+# Setup
+
+```{r}
+
+set.seed(1256)
+data = real_data()
+patients = dat_patients(data)
+# training and test sets
+
+# 50% used to generate the synthetic data, and 50% used to train the MIA
+
+train_test = train_test_set(data, 0.5)
+
+training_set = train_test[[1]]
+test_set = train_test[[2]]
+
+training_patients = dat_patients(training_set)
+test_patients = dat_patients(test_set)
+
+synthetic_datasets = list(
+  comp_synth(training_set, clock = 'reset'),
+  comp_synth(training_set, clock = 'reset'),
+  comp_synth(training_set, clock = 'reset'),
+  comp_synth(training_set, clock = 'reset'),
+  comp_synth(training_set, clock = 'reset'),
+  comp_synth(training_set, clock = 'reset')
+)
+```
+
+
+# MIA
+
+```{r}
+# Dividing the test set. 90% used to train the MIA and 10% for evaluation
+
+mia_sensitive_pat_ids = sample(test_patients$patient_id, 10)
+
+mia_train = test_set[!(test_set$patient_id %in% mia_sensitive_pat_ids), ]
+mia_test = test_set[test_set$patient_id %in% mia_sensitive_pat_ids, ]
+
+mia_train_pat = dat_patients(mia_train)
+mia_test_pat = dat_patients(mia_test)
+
+# sample 10 patients that are actually in the training data
+# used to make classifiers for 10 patients IN the training data
+mia_test_pat_in_train = sample(training_patients$patient_id, 10)
+mia_test_in_train = training_set[training_set$patient_id %in% mia_test_pat_in_train, ]
+mia_test_in_train_pat = dat_patients(mia_test_in_train)
+
+```
+
+
+The adversary has data on 20 patients which they suspect are in the training data of a synthetic data set. 10 of which are in the training data, and 10 are not. The adversary also has access to a data set which is assumed to be separate from the training data, but is similar. We train mia classifiers that target each of the 20 patients, and then we test how well these classifiers can recognize which of them have been used to generate the synthetic data set. 
+```{r message=FALSE, include=FALSE}
+# create marked shadow synthetic data sets for each patient in mia_test_pat
+
+shadow_syn_sets0 = vector('list', nrow(mia_test_pat))
+
+for (i in 1:nrow(mia_test_pat)) {
+  shadow_syn_sets0[[i]] = create_marked_synth(
+    mia_train,
+    remove_id = mia_test_pat$patient_id[i],
+    remove_id_dat = mia_test,
+    k = 20
+  )
+}
+
+
+
+```
+
+
+```{r}
+# create data frames with the label
+
+shadow_syn_lab_sets0 = lapply(shadow_syn_sets0, function(x) {
+  df_list = x[[1]]
+  lab = x[[2]]
+  return (combined_df_lab(df_list, lab)[[1]])
+})
+
+rf_models0 = lapply(shadow_syn_lab_sets0, train_classifier_mi)
+
+```
+Predicted values for the mia_test_pat classifiers.
+```{r}
+
+predicted0 = as.data.frame(matrix(
+  nrow = nrow(mia_test_pat),
+  ncol = length(synthetic_datasets)
+))
+
+for (i in 1:length(synthetic_datasets)) {
+  for (j in 1:nrow(mia_test_pat)) {
+    predicted0[j, i] = predict_synth(rf_models0[[j]], synthetic_datasets[[i]])
+  }
+}
+
+```
+Calculate the accuracy
+```{r}
+
+acc0 = mean(predicted0 < 0.5)
+acc1 = mean(predicted1 > 0.5)
+```
+
+
+Repeat for the 10 patients present in the training data
+```{r include=FALSE}
+# create shadow synthetic data sets for each patient in mia_test_in_train_pat
+
+shadow_syn_sets1 = vector('list', nrow(mia_test_in_train_pat))
+
+for (i in 1:nrow(mia_test_in_train_pat)) {
+  shadow_syn_sets1[[i]] = create_marked_synth(
+    mia_train,
+    remove_id = mia_test_in_train_pat$patient_id[i],
+    remove_id_dat = mia_test_in_train,
+    k = 20
+  )
+}
+
+# create data frames with the label
+
+shadow_syn_lab_sets1 = lapply(shadow_syn_sets1, function(x) {
+  df_list = x[[1]]
+  lab = x[[2]]
+  return (combined_df_lab(df_list, lab)[[1]])
+})
+
+rf_models1 = lapply(shadow_syn_lab_sets1, train_classifier_mi)
+
+
+```
+Predict using the classifiers belonging to the patients in the training data.
+```{r}
+
+predicted1 = as.data.frame(matrix(
+  nrow = nrow(mia_test_in_train_pat),
+  ncol = length(synthetic_datasets)
+))
+
+for (i in 1:length(synthetic_datasets)) {
+  for (j in 1:nrow(mia_test_in_train_pat)) {
+    predicted1[j, i] = predict_synth(rf_models1[[j]], synthetic_datasets[[i]])
+  }
+}
+
+```
+
+
+Convert predicted df into tables
+```{r}
+
+# include means
+
+predicted0_mean = rbind(predicted0, colMeans(predicted0))
+predicted0_mean = cbind(predicted0_mean, rowMeans(predicted0_mean))
+
+predicted1_mean = rbind(predicted1, colMeans(predicted1))
+predicted1_mean = cbind(predicted1_mean, rowMeans(predicted1_mean))
+
+colnames(predicted0_mean) = colnames(predicted1_mean) = c('syndat1',
+                                                          'syndat2',
+                                                          'syndat3',
+                                                          'syndat4',
+                                                          'syndat5',
+                                                          'syndat6',
+                                                          'mean')
+
+rownames(predicted0_mean) = rownames(predicted1_mean) = c('pat1',
+                                                          'pat2',
+                                                          'pat3',
+                                                          'pat4',
+                                                          'pat5',
+                                                          'pat6',
+                                                          'pat7',
+                                                          'pat8',
+                                                          'pat9',
+                                                          'pat10',
+                                                          'mean')
+``` 
+

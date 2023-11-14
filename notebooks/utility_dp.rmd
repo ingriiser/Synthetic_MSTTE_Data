@@ -1,0 +1,436 @@
+---
+  title: "Utility Evaluation"
+author: "Ingvild Riiser"
+output: pdf_document
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Setup. 
+```{r}
+library("hesim")
+library("data.table")
+library("flexsurv")
+library("sets")
+library("MASS")
+library("randomForest")
+library("survminer")
+library("datasets")
+library("dplyr")
+library("tidyr")
+library("xtable")
+library("synthpop")
+library("psych")
+library("survival")
+library("ggplot2")
+library("gridExtra")
+library("ggcorrplot")
+
+source("../src/datasets_setup.r")
+source("../src/generate_syn.r")
+source("../src/distance_evaluation.r")
+source("../src/utility_evaluation.r")
+
+```
+
+```{r}
+# test and training data with same split as in utility_evaluation
+set.seed(1906)
+
+data = real_data()
+train_test = train_test_set(data)
+train_data = train_test[[1]]
+test_data = train_test[[2]]
+```
+
+
+Import patient data with dp guarantee
+
+```{r}
+
+
+dp_syn_pat = read.csv("../data/synth_pat_dp/dp_pat_eps0.5_0.csv")
+dp_syn_pat2 = read.csv("../data/synth_pat_dp/dp_pat_eps0.5_1.csv")
+dp_syn_pat3 = read.csv("../data/synth_pat_dp/dp_pat_eps0.5_2.csv")
+dp_syn_pat4 = read.csv("../data/synth_pat_dp/dp_pat_eps0.5_3.csv")
+dp_syn_pat5 = read.csv("../data/synth_pat_dp/dp_pat_eps0.5_4.csv")
+dp_syn_pat6 = read.csv("../data/synth_pat_dp/dp_pat_eps1_0.csv")
+dp_syn_pat7 = read.csv("../data/synth_pat_dp/dp_pat_eps1_1.csv")
+dp_syn_pat8 = read.csv("../data/synth_pat_dp/dp_pat_eps1_2.csv")
+dp_syn_pat9 = read.csv("../data/synth_pat_dp/dp_pat_eps1_3.csv")
+dp_syn_pat10 = read.csv("../data/synth_pat_dp/dp_pat_eps1_4.csv")
+dp_syn_pat11 = read.csv("../data/synth_pat_dp/dp_pat_eps5_0.csv")
+dp_syn_pat12 = read.csv("../data/synth_pat_dp/dp_pat_eps5_1.csv")
+dp_syn_pat13 = read.csv("../data/synth_pat_dp/dp_pat_eps5_2.csv")
+dp_syn_pat14 = read.csv("../data/synth_pat_dp/dp_pat_eps5_3.csv")
+dp_syn_pat15 = read.csv("../data/synth_pat_dp/dp_pat_eps5_4.csv")
+
+
+dp_syn_pat = dp_syn_pat[, 2:6]
+dp_syn_pat2 = dp_syn_pat2[, 2:6]
+dp_syn_pat3 = dp_syn_pat3[, 2:6]
+dp_syn_pat4 = dp_syn_pat4[, 2:6]
+dp_syn_pat5 = dp_syn_pat5[, 2:6]
+dp_syn_pat6 = dp_syn_pat6[, 2:6]
+dp_syn_pat7 = dp_syn_pat7[, 2:6]
+dp_syn_pat8 = dp_syn_pat8[, 2:6]
+dp_syn_pat9 = dp_syn_pat9[, 2:6]
+dp_syn_pat10 = dp_syn_pat10[, 2:6]
+dp_syn_pat11 = dp_syn_pat11[, 2:6]
+dp_syn_pat12 = dp_syn_pat12[, 2:6]
+dp_syn_pat13 = dp_syn_pat13[, 2:6]
+dp_syn_pat14 = dp_syn_pat14[, 2:6]
+dp_syn_pat15 = dp_syn_pat15[, 2:6]
+list_dpsyn = list(
+  dp_syn_pat,
+  dp_syn_pat2,
+  dp_syn_pat3,
+  dp_syn_pat4,
+  dp_syn_pat5,
+  dp_syn_pat6,
+  dp_syn_pat7,
+  dp_syn_pat8,
+  dp_syn_pat9,
+  dp_syn_pat10,
+  dp_syn_pat11,
+  dp_syn_pat12,
+  dp_syn_pat13,
+  dp_syn_pat14,
+  dp_syn_pat15
+)
+
+
+
+# pvalues of marginal distributions
+p_vals = matrix(nrow = 15, ncol = 5)
+
+mean_cor_dp = c()
+cor_train = cor(train_pat[2:5], method = "spearman")
+
+p_values = c()
+n = nrow(train_pat)
+for (i in 1:15) {
+  # continuous
+  
+  p_values = c(p_values, chisq.test(
+    table(list_dpsyn[[i]]$treatment_grp),
+    p = table(train_pat$treatment_grp) / n
+  )$p.value)
+  
+  p_values = c(p_values, ks.test(train_pat$age, list_dpsyn[[i]]$age)$p.value)
+  
+  p_values = c(p_values, chisq.test(table(list_dpsyn[[i]]$female),
+                                    p = table(train_pat$female) / n)$p.value)
+  p_values = c(p_values, chisq.test(
+    table(list_dpsyn[[i]]$starting_state),
+    p = table(train_pat$starting_state) / n
+  )$p.value)
+}
+
+p_adj = p.adjust(p_values, method = "BH")
+
+for (i in 1:15) {
+  p_vals[i, 1] = p_adj[4 * (i - 1) + 1]
+  
+  p_vals[i, 2] = p_adj[4 * i - 2]
+  
+  p_vals[i, 3] = p_adj[4 * i - 1]
+  
+  p_vals[i, 4] = p_adj[4 * i]
+  
+  # correlation
+  cor_dp_i = cor(list_dpsyn[[i]][2:5], method = "spearman")
+  mean_cor_dp = c(mean_cor_dp, mean_corr(cor_train, cor_dp_i))
+  
+  p_vals[i, 5] = mean_corr(cor_train, cor_dp_i)
+  
+}
+sum_xtable = xtable(p_vals, type = "latex", digits = c(-2,-2,-2,-2,-2, 3))
+
+print(sum_xtable)
+
+
+```
+
+Correlation
+
+```{r}
+
+
+cor_train = cor(train_pat[2:5], method = "spearman")
+cor_dp_syn = cor(dp_syn_pat[2:5], method = "spearman")
+cor_dp_syn2 = cor(dp_syn_pat2[2:5], method = "spearman")
+
+mean_cor_dp = c()
+
+
+colnames(cor_dp_syn2) = rownames(cor_dp_syn2) = colnames(cor_train) = rownames(cor_train) = colnames(cor_dp_syn) = rownames(cor_dp_syn) = c("Treatment group", "Starting age", "Female", "Starting state")
+
+
+plot1 = ggcorrplot(
+  cor_train,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  lab = TRUE,
+  title = "(a)",
+  show.legend = FALSE,
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot2 = ggcorrplot(
+  cor_dp_syn,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(b)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot3 = ggcorrplot(
+  cor_dp_syn2,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(b)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+
+multiplot = do.call(grid.arrange, c(list(plot1, plot2, plot3), ncol = 3))
+ggsave(
+  "../figures/corr_plot_dp.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+mean_corr(cor_train, cor_dp_syn2)
+```
+
+
+Plot the data
+```{r}
+
+df_list = list(train_pat, dp_syn_pat, dp_syn_pat6, dp_syn_pat11)
+title_list = list("(a)", "(b)", "(c)", "(d)")
+
+histograms = lapply(1:length(df_list), function(i) {
+  ggplot(df_list[[i]], aes(x = age)) +
+    geom_histogram(
+      binwidth = 1,
+      fill = '#b65302',
+      color = "#b65302"
+    ) +
+    labs(title = title_list[[i]]) + xlab("starting age") +
+    theme_classic()
+})
+
+multiplot = do.call(grid.arrange, c(histograms, ncol = 4))
+ggsave(
+  "../figures/distributions_age_dp.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 2,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+print(multiplot)
+```
+
+Frequency tables
+```{r}
+
+library(xtable)
+
+ft = sapply(1:length(df_list), function(i) {
+  c(unlist(table(df_list[[i]]$treatment_grp)),
+    unlist(table(df_list[[i]]$female)),
+    unlist(table(df_list[[i]]$starting_state)))
+})
+
+ft = t(ft)
+
+freq_table = xtable(ft, type = "latex")
+
+print(freq_table, include.rownames = FALSE)
+```
+Correlation plots.
+```{r}
+df_list = list(train_pat, dp_syn_pat, dp_syn_pat6, dp_syn_pat11)
+
+
+cor_train = cor(train_pat[2:5], method = "spearman")
+cor_test = cor(test_pat[2:5], method = "spearman")
+cor_dp = cor(dp_syn_pat[2:5], method = "spearman")
+cor_dp6 = cor(dp_syn_pat6[2:5], method = "spearman")
+cor_dp11 = cor(dp_syn_pat11[2:5], method = "spearman")
+
+colnames(cor_train) = rownames(cor_train) = colnames(cor_dp) = rownames(cor_dp) =
+  colnames(cor_dp6) = rownames(cor_dp6) =  colnames(cor_dp11) = rownames(cor_dp11) =
+  c("Treatment group", "Starting age", "Female", "Starting state")
+
+
+plot1 = ggcorrplot(
+  cor_train,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  lab = TRUE,
+  title = "(a)",
+  show.legend = FALSE,
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot2 = ggcorrplot(
+  cor_dp,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(b)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot3 = ggcorrplot(
+  cor_dp6,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(c)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+plot4 = ggcorrplot(
+  cor_dp11,
+  hc.order = FALSE,
+  type = "lower",
+  #show.diag = TRUE,
+  show.legend = FALSE,
+  lab = TRUE,
+  title = "(d)",
+  lab_size = 3,
+  tl.cex = 9,
+  outline.color = "white",
+  ggtheme = ggplot2::theme_void,
+  colors = c("#381042", "white", '#b65302')
+)
+
+
+multiplot = do.call(grid.arrange, c(list(plot1, plot2, plot3, plot4), ncol = 2))
+ggsave(
+  "../figures/corr_plot_all_dp.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 6,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+mean_corr(cor_train, cor_cf)
+mean_corr(cor_train, cor_cr)
+```
+Kaplan-Meier Curves evaluating the full synthetic dp data
+```{r}
+# import full dp syndat
+syn_dat_dp = read.csv("syn_dat_dp.csv", header = TRUE)
+
+# combine train_dat and syn_dat with labels
+
+syn_dat_dp$syn = 1
+train_data$syn = 0
+
+train_dp = rbind(syn_dat_dp, train_data)
+
+plots_dp = list()
+
+p_placements_dp = list(c(20, 0.9), c(20, 0.9), c(8, 0.9), c(8, 0.9))
+titles_list = list("(a)", "(b)", "(c)", "(d)")
+
+for (i in (1:4)) {
+  fit_dp  = survfit(
+    Surv(years, status) ~ syn,
+    type = "kaplan-meier",
+    data = train_dp,
+    subset = (trans == i)
+  )
+  
+  ggsurv = ggsurvplot(
+    fit_dp,
+    data = train_dp,
+    palette = c("#381042", '#b65302'),
+    conf.int = TRUE,
+    pval = TRUE,
+    censor = FALSE,
+    censor.size = 2,
+    censor.shape = "|",
+    pval.coord = p_placements_dp[[i]],
+    legend.labs = c("Real", "Synthetic")
+  )
+  ggsurv$plot = ggsurv$plot +
+    theme(legend.text = element_text(
+      size = 12,
+      color = "black",
+      face = "bold"
+    )) +
+    labs(title = titles_list[[i]])
+  plots_dp[[i]] = ggsurv$plot
+}
+
+
+multiplot = do.call(grid.arrange, c(plotlist = plots_dp, ncol = 2))
+
+ggsave(
+  "../figures/km_dp.pdf",
+  multiplot,
+  device = "pdf",
+  width = 6,
+  height = 4.5,
+  units = "in",
+  dpi = 300,
+  colormodel = "cmyk"
+)
+
+
+```
